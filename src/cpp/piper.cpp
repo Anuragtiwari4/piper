@@ -147,6 +147,37 @@ void parseSynthesisConfig(json &configRoot, SynthesisConfig &synthesisConfig) {
   //         }
   //     }
   // }
+  if (configRoot.contains("audio")) {
+        auto audioValue = configRoot["audio"];
+        if (audioValue.contains("sample_rate")) {
+            synthesisConfig.sampleRate = audioValue.value("sample_rate", 22050);
+        }
+    }
+
+    if (configRoot.contains("inference")) {
+        auto inferenceValue = configRoot["inference"];
+        if (inferenceValue.contains("noise_scale")) {
+            synthesisConfig.noiseScale = inferenceValue.value("noise_scale", 0.667f);
+        }
+        if (inferenceValue.contains("length_scale")) {
+            synthesisConfig.lengthScale = inferenceValue.value("length_scale", 1.0f);
+        }
+        if (inferenceValue.contains("noise_w")) {
+            synthesisConfig.noiseW = inferenceValue.value("noise_w", 0.8f);
+        }
+
+        // Add phoneme silence mapping here for commas, exclamations, etc.
+        if (!synthesisConfig.phonemeSilenceSeconds) {
+            synthesisConfig.phonemeSilenceSeconds.emplace();
+        }
+
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint(",")] = 0.4f;  // Pause for 0.3 seconds at commas
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint(".")] = 0.6f;  // Pause for 0.6 seconds at full stop
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint("?")] = 0.6f;  // Pause for 0.7 seconds at quetion mark
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint("!")] = 0.5f;  // Pause for 0.5 seconds at exclamations
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint("um")] = 0.6f; // Pause for 0.4 seconds at "um"
+        (*synthesisConfig.phonemeSilenceSeconds)[getCodepoint("uh")] = 0.6f; // Pause for 0.4 seconds at "uh"
+    }
 
   if (configRoot.contains("audio")) {
     auto audioValue = configRoot["audio"];
@@ -193,6 +224,36 @@ void parseSynthesisConfig(json &configRoot, SynthesisConfig &synthesisConfig) {
   } // if inference
 
 } /* parseSynthesisConfig */
+// FUNCTION TO INJECT SILENCE
+std::vector<float> injectSilence(std::vector<float>& audio, float silenceDuration, int sampleRate) {
+    int numSilenceSamples = static_cast<int>(silenceDuration * sampleRate);
+    std::vector<float> silence(numSilenceSamples, 0.0f);
+    audio.insert(audio.end(), silence.begin(), silence.end());
+    return audio;
+}
+// MODIFY SYNTHESIS FUNCTION TO HANDLE PAUSES
+std::vector<float> synthesizeSpeechWithPauses(SynthesisConfig &synthesisConfig, const std::string &text) {
+    std::vector<float> audio;
+    // Process the text to phonemes
+    auto phonemes = textToPhonemes(text);
+
+    for (auto &phoneme : phonemes) {
+        // Synthesize the phoneme
+        std::vector<float> phonemeAudio = synthesizePhoneme(synthesisConfig, phoneme);
+
+        // Check if there's a pause after the phoneme
+        if (synthesisConfig.phonemeSilenceSeconds &&
+            synthesisConfig.phonemeSilenceSeconds->count(phoneme)) {
+            float silenceDuration = (*synthesisConfig.phonemeSilenceSeconds)[phoneme];
+            injectSilence(phonemeAudio, silenceDuration, synthesisConfig.sampleRate);
+        }
+
+        // Append the phoneme audio to the final output
+        audio.insert(audio.end(), phonemeAudio.begin(), phonemeAudio.end());
+    }
+
+    return audio;
+}
 
 void parseModelConfig(json &configRoot, ModelConfig &modelConfig) {
 
